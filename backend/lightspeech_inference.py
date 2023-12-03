@@ -1,12 +1,5 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-import asyncio
-import eventlet
-from flask_cors import CORS
-from flask_socketio import SocketIO
-from flask import Flask, jsonify, request, send_file
-
-
 import os, glob, re
 from tqdm import tqdm
 import numpy as np
@@ -14,10 +7,6 @@ import torch
 import utils
 from utils.hparams import hparams, set_hparams
 from tasks.lightspeech import LightSpeechDataset, LightSpeechTask
-
-app = Flask(__name__)
-sio = SocketIO(app, cors_allowed_origins='*')
-CORS(app)
 
 set_hparams()
 
@@ -32,13 +21,22 @@ def get_latest_ckpt(dir):
 task = LightSpeechTask()
 task.model = task.build_model()
 
-# load the latest checkpoint from work_dir defined in hparams
-ckpt = torch.load(get_latest_ckpt(hparams['work_dir']))
-task.global_step = ckpt['global_step']
-task.load_state_dict(ckpt['state_dict'])
+if torch.cuda.is_available():
+    device = 'cuda'
+    # load the latest checkpoint from work_dir defined in hparams
+    ckpt = torch.load(get_latest_ckpt(hparams['work_dir']))
+    task.global_step = ckpt['global_step']
+    task.load_state_dict(ckpt['state_dict'])
+    task.model.eval().cuda()
 
-# load the model to gpu
-task.model.eval().cuda()
+else:
+    device = 'cpu'
+    ckpt = torch.load(get_latest_ckpt(hparams['work_dir']), map_location=torch.device('cpu'))
+    task.global_step = ckpt['global_step']
+    task.load_state_dict(ckpt['state_dict'])
+    # load the model to cpu
+    task.model.eval()
+
 
 # prepare vocoder
 task.prepare_vocoder()
@@ -47,45 +45,33 @@ task.prepare_vocoder()
 dataset = LightSpeechDataset(hparams['data_dir'], task.phone_encoder, None, hparams, shuffle=False, infer_only=True)
 
 # inference requires phoneme input and the corresponding target_mean and target_std
-@sio.on('uploaded')
-def handle_message(data):
-    with open(hparams['inference_text'], 'r') as f:
-        user_text = f.readlines()
 
-    # create sample dir inside work_dir in hparams
-    gen_dir = "output"
-    os.makedirs(gen_dir, exist_ok=True)
-    os.makedirs(f'{gen_dir}/wavs', exist_ok=True)
-    os.makedirs(f'{gen_dir}/spec_plot', exist_ok=True)
-    os.makedirs(f'{gen_dir}/pitch_plot', exist_ok=True)
+with open(hparams['inference_text'], 'r') as f:
+    user_text = f.readlines()
 
-    # perform text-to-speech then save mel and wav
-    progressbar = tqdm(user_text, total=len(user_text))
-    with torch.no_grad():
-        for i, text in enumerate(progressbar):
-            sio.send({
-                        'key': 1,
-                        'current':round(progressbar.n/len(user_text)*100, 2),
-                        'total': 100})
-            text = text.strip()
-            phone = torch.LongTensor(dataset.text_to_phone(text))
-            phone = phone.unsqueeze(0).cuda()
-            output = task.model(phone, None, None, None, None, None)
-            output['outputs'] = output['mel_out']
-            _output = utils.unpack_dict_to_list(output)[0]
-            output = {}
-            for k, v in _output.items():
-                if type(v) is torch.Tensor:
-                    output[k] = v.cpu().numpy()
-            mel_out = task.remove_padding(output['mel_out'])
-            noise_outputs = task.remove_padding(output.get("noise_outputs"))
-            pitch_pred = task.remove_padding(output.get("pitch"))
-            wav_out = task.inv_spec(mel_out, pitch_pred, noise_outputs)
-            # save mel and wav
-            task.save_result(wav_out, mel_out, f'P', i, text, gen_dir, pitch=pitch_pred)
-        sio.send({'key': 1, 'current':100, 'total':100})
-        sio.sleep(0)
-    return
+# create sample dir inside work_dir in hparams
+gen_dir = "output"
+os.makedirs(gen_dir, exist_ok=True)
+os.makedirs(f'{gen_dir}/wavs', exist_ok=True)
+os.makedirs(f'{gen_dir}/spec_plot', exist_ok=True)
+os.makedirs(f'{gen_dir}/pitch_plot', exist_ok=True)
 
-sio.run(app, host='0.0.0.0', port=5050, debug=True)
-
+# perform text-to-speech then save mel and wav
+with torch.no_grad():
+    for i, text in enumerate(tqdm(user_text)):
+        text = text.strip()
+        phone = torch.LongTensor(dataset.text_to_phone(text))
+        phone = phone.unsqueeze(0).to(device)
+        output = task.model(phone, None, None, None, None, None)
+        output['outputs'] = output['mel_out']
+        _output = utils.unpack_dict_to_list(output)[0]
+        output = {}
+        for k, v in _output.items():
+            if type(v) is torch.Tensor:
+                output[k] = v.cpu().numpy()
+        mel_out = task.remove_padding(output['mel_out'])
+        noise_outputs = task.remove_padding(output.get("noise_outputs"))
+        pitch_pred = task.remove_padding(output.get("pitch"))
+        wav_out = task.inv_spec(mel_out, pitch_pred, noise_outputs)
+        # save mel and wav
+        task.save_result(wav_out, mel_out, f'P', i, text, gen_dir, pitch=pitch_pred)
