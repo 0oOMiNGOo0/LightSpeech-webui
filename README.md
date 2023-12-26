@@ -21,8 +21,7 @@ pip install -r requirements.txt
 
 ```bash
 cd .. # move to LightSpeech
-docker build . -t lightspeech_next:1.0 -f ./next.Dockerfile
-docker run --name lightspeech_next -d -p 3000:3000 -v ~/LightSpeech/output:/app/public/output lightspeech_next:1.0
+docker-compose up -d # build docker
 ```
 
 Now you can access to localhost:3000

@@ -38,7 +38,7 @@ def handle_message():
             os.replace(f'output/wavs/{i}', output_directory + f'/{i}')
         else:
             os.rename(f'output/wavs/{i}', output_directory + f'/{i}')
-    output_paths = os.listdir(output_directory)
+    output_paths = [x for x in os.listdir(output_directory) if 'wav' in x]
     print(output_paths)
     sio.emit('downloads', output_paths)
     os.remove('inference_text.txt')

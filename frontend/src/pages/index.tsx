@@ -209,7 +209,7 @@ export default function Home() {
           <List className='p-2'>
             {outputFilePaths.map((path, i) => (
               <a
-                href={path.replaceAll('[P]', 'output/[P]')}
+                href={path.replaceAll('[P]', 'static/[P]')}
                 download={path}
                 key={i}
               >
