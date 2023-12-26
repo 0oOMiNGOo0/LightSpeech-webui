@@ -25,17 +25,20 @@ def AS():
 def handle_message():
     command = "python lightspeech_inference.py --config configs/tts/lj/lightspeech.yaml --exp_name lightspeech --reset --inference_text inference_text.txt"
     subprocess.run(command, shell=True)
+    sio.send({'current':100, 'total': 100})
 
     path = os.path.expanduser("~")
-    sio.send({'current':100, 'total': 100})
-    if not os.path.exists(path + '/LightSpeech/output'):
-        os.makedirs(path + '/LightSpeech/output')
+    output_directory = path + '/LightSpeech/output'
+    os.chmod(output_directory, 0o777)
+
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
     for i in os.listdir('output/wavs'):
-        if os.path.exists(path + f'/LightSpeech/output/{i}'):
-            os.replace(f'output/wavs/{i}', path + f'/LightSpeech/output/{i}')
+        if os.path.exists(output_directory + f'/{i}'):
+            os.replace(f'output/wavs/{i}', output_directory + f'/{i}')
         else:
-            os.rename(f'output/wavs/{i}', path + f'/LightSpeech/output/{i}')
-    output_paths = os.listdir(path + '/LightSpeech/output')
+            os.rename(f'output/wavs/{i}', output_directory + f'/{i}')
+    output_paths = os.listdir(output_directory)
     print(output_paths)
     sio.emit('downloads', output_paths)
     os.remove('inference_text.txt')
